@@ -114,3 +114,5 @@ To test the deployed model as a web service:
     ]
     ```
     <img width="963" height="856" alt="image" src="https://github.com/user-attachments/assets/89c9ddbe-abca-4eb1-8e62-84941b0b3b59" />
+### Github Page
+[Healthcare Prediction Stroke](https://kxtss.github.io/healthcare-prediction-stroke/Build-deploy-stroke-prediction-model-R.html)
