@@ -83,7 +83,7 @@ I recommend placing the project files in a simple, structured location, such as 
 
 To test the deployed model as a web service:
 
-1.  **Run the Startup Script:** From R, RStudio or VSCode with R, run the startup script (`start_api.R` or similar) containing the code to launch the Plumber service:
+1.  **Run the Startup Script:** From another R, RStudio or VSCode with R session, run the startup script (`start_api.R` or similar) containing the code to launch the Plumber service:
     ```r
     # start_api.R
     library(plumber)
@@ -113,3 +113,4 @@ To test the deployed model as a web service:
       }
     ]
     ```
+    <img width="963" height="856" alt="image" src="https://github.com/user-attachments/assets/89c9ddbe-abca-4eb1-8e62-84941b0b3b59" />
