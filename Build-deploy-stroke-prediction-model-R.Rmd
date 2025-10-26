@@ -1,0 +1,264 @@
+---
+title: "Build and deploy a stroke prediction model using R"
+date: "`r Sys.Date()`"
+output: html_document
+author: "Put your name!"
+---
+
+# About Data Analysis Report
+
+This RMarkdown file contains the report of the data analysis done for the project on building and deploying a stroke prediction model in R. It contains analysis such as data exploration, summary statistics and building the prediction models. The final report was completed on `r date()`. 
+
+**Data Description:**
+
+According to the World Health Organization (WHO) stroke is the 2nd leading cause of death globally, responsible for approximately 11% of total deaths.
+
+This data set is used to predict whether a patient is likely to get stroke based on the input parameters like gender, age, various diseases, and smoking status. Each row in the data provides relevant information about the patient.
+
+
+# Task One: Import data and data preprocessing
+
+## Load data and install packages
+
+```{r}
+library(tidyverse)
+
+library(tidymodels)
+library(themis)
+
+library(dplyr)
+library(stringr)
+library(purrr)
+library(yardstick)
+library(ranger)
+library(vetiver)
+library(pins)
+
+library(skimr)
+
+healthcare_df <- read.csv("healthcare-dataset-stroke-data.csv")
+
+head(healthcare_df)
+```
+
+
+
+## Describe and explore the data
+
+```{r}
+glimpse(healthcare_df)
+
+skim(healthcare_df)
+
+count_unknown_total <- healthcare_df %>%
+  summarise(across(everything(), ~ sum(. == "Unknown", na.rm = TRUE)))
+
+print(count_unknown_total)
+
+count_na_total <- healthcare_df %>%
+  summarise(across(everything(), ~ sum(. == "N/A", na.rm = TRUE)))
+
+print(count_na_total)
+
+na_per_column <- colSums(is.na(healthcare_df))
+
+print(na_per_column)
+
+healthcare_df_clean <- healthcare_df %>%
+  mutate(bmi = as.numeric(case_when(bmi == "N/A" ~ NA_real_, TRUE ~ as.numeric(bmi)))) %>%
+  mutate(smoking_status = case_when(smoking_status == "Unknown" ~ NA_character_, TRUE ~ smoking_status)) %>%
+  mutate(bmi = ifelse(is.na(bmi), 0, bmi)) %>%
+  mutate(smoking_status = replace_na(smoking_status, "missing"))
+
+healthcare_df_clean <- healthcare_df_clean %>%
+  mutate(stroke = factor(stroke, levels = c(1, 0), labels = c("Yes", "No")))
+
+count_unknown_total_clean <- healthcare_df_clean %>%
+  summarise(across(everything(), ~ sum(. == "Unknown", na.rm = TRUE)))
+
+count_na_total_clean <- healthcare_df_clean %>%
+  summarise(across(everything(), ~ sum(. == "N/A", na.rm = TRUE)))
+
+na_per_column_clean <- colSums(is.na(healthcare_df_clean))
+
+print(na_per_column_clean)
+print(count_unknown_total_clean)
+print(count_na_total_clean)
+glimpse(healthcare_df_clean)
+```
+
+# Task Two: Build prediction models
+
+```{r}
+set.seed(42)
+data_split <- initial_split(healthcare_df_clean, prop = 0.70, strata = stroke)
+
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+data_folds <- vfold_cv(train_data, v = 10, strata = stroke)
+
+print(data_folds)
+
+stroke_recipe <- recipe(stroke ~ ., data = train_data) %>%
+  step_normalize(all_numeric_predictors(), -all_of(c("id"))) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_smote(stroke, over_ratio = 1)
+
+print(stroke_recipe)
+
+log_reg_spec <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+stroke_flow <- workflow() %>%
+  add_recipe(stroke_recipe) %>%
+  add_model(log_reg_spec)
+
+print(stroke_flow)
+
+log_reg_fit_cv <- stroke_flow %>%
+  fit_resamples(resamples = data_folds, metrics = metric_set(roc_auc, sensitivity, specificity, accuracy))
+
+collect_metrics(log_reg_fit_cv)
+
+final_model_fit <- stroke_flow %>%
+  fit(data = train_data)
+
+test_predictions <- final_model_fit %>%
+  predict(test_data) %>%
+  bind_cols(test_data %>% select(stroke))
+
+conf_mat(test_predictions, truth = stroke, estimate = .pred_class)
+test_predictions %>% metrics(truth = stroke, estimate = .pred_class)
+```
+
+# Task Three: Evaluate and select prediction models
+
+```{r}
+eval_metrics <- test_predictions %>%
+  metrics(truth = stroke, estimate = .pred_class) %>%
+  bind_rows(test_predictions %>% bal_accuracy(truth = stroke, estimate = .pred_class), test_predictions %>% f_meas(truth = stroke, estimate = .pred_class))
+
+print("--- Logistic Regression Metrics ---")
+print(eval_metrics)
+
+rf_spec <- rand_forest(trees = 1000) %>%
+  set_engine("ranger", num.threads = 4) %>%
+  set_mode("classification")
+
+rf_wflow <- workflow() %>%
+  add_recipe(stroke_recipe) %>%
+  add_model(rf_spec)
+
+message("Starting fit_resamples for Random Forest...")
+
+rf_fit_cv <- rf_wflow %>%
+  fit_resamples(resamples = data_folds, metrics = metric_set(roc_auc, sensitivity, specificity, accuracy))
+
+print("--- Random Forest (CV) Metrics ---")
+collect_metrics(rf_fit_cv)
+```
+
+
+
+# Task Four: Deploy the prediction model
+
+```{r}
+final_rf_fit <- rf_wflow %>%
+  fit(data = train_data)
+
+print(final_rf_fit)
+
+v <- final_rf_fit %>% vetiver_model(model_name = "stroke_prediction_rf")
+
+print(v)
+
+board_path <- "C:/Users/your_user/Desktop/stroke_api/model_board"
+
+board <- board_folder(path = board_path)
+
+board %>% vetiver_pin_write(v)
+
+vetiver_write_plumber(board, "stroke_prediction_rf")
+```
+
+
+
+# Task Five: Findings and Conclusions
+
+This section summarizes the process, the evaluation of the stroke prediction models, and the key learnings from the project.
+
+## 1. Summary of Process and Data Preprocessing
+
+The project involved a comprehensive machine learning workflow, starting with extensive data preparation.
+
+### Key Data Steps:
+
+* **Missing Data Imputation:** The `bmi` column, which contained "N/A" values, required transformation from `chr` to `dbl` with imputation, replacing "N/A"s (or missing values) with 0. The `smoking_status` was handled by converting "Unknown" to a specific category, such as "missing", to retain information.
+* **Feature Engineering:** Categorical variables were prepared using a recipe that included `step_normalize()` for numerical features and `step_dummy()` for categorical features.
+* **Handling Class Imbalance:** The binary target variable `stroke` was heavily imbalanced (very few positive cases). To address this critical issue, the `step_smote()` function from the `themis` package was incorporated into the recipe, generating synthetic samples of the minority class to create a more balanced training dataset.
+
+## 2. Model Evaluation and Selection
+
+Two distinct models were compared using 10-fold cross-validation (`fit_resamples`): **Logistic Regression** and **Random Forest**.
+
+| Métrica | Regresión Logística (RL) CV | Random Forest (RF) CV |
+| :--- | :--- | :--- |
+| `Accuracy` | 0.762 | **0.947** |
+| `roc_auc` | **0.840** | 0.808 |
+| `Sensitivity` | 0.761 | **0.0189** |
+| `Specificity` | 0.763 | **0.994** |
+
+### Key Findings:
+
+1.  **High Accuracy vs. Low Sensitivity (Random Forest):**
+    * The **Random Forest** model achieved a very high `Accuracy` (0.947) and near-perfect `Specificity` (0.994), indicating it is excellent at correctly identifying patients who **do not** have a stroke (True Negatives).
+    * **CRITICAL FLAW:** However, its `Sensitivity` was extremely low (0.0189). In a clinical setting, this means the model **fails to identify almost all actual stroke cases** (high rate of False Negatives). This behavior is likely due to the model overfitting to the majority class ("No Stroke") or the `SMOTE` technique being ineffective for this specific algorithm/dataset combination.
+2.  **Balanced Performance (Logistic Regression):**
+    * The **Logistic Regression** model showed a much better balance between `Sensitivity` (0.761) and `Specificity` (0.763). Although its overall `Accuracy` is lower, its balanced approach to classifying both positive and negative cases is **clinically more responsible**.
+    * It also achieved a slightly higher **AUC-ROC** (0.840), indicating a better overall discrimination capacity between the two classes.
+
+## 3. Conclusions and Future Work
+
+### Conclusion:
+
+Based on the evaluation, the **Logistic Regression** model is the more reliable choice for an initial production environment, as its ability to correctly identify positive stroke cases (`Sensitivity`) is significantly better than the Random Forest model. The high performance of the Random Forest on `Accuracy` is misleading due to its near-zero `Sensitivity`.
+
+### Future Steps:
+
+* **Model Optimization:** Focus on tuning the hyperparameters of the **Random Forest** model to find a better trade-off point that increases `Sensitivity` without completely sacrificing `Specificity`.
+* **Class Imbalance Techniques:** Explore alternative strategies to handle the class imbalance, such as **class weights** or different oversampling/undersampling methods, to ensure the minority class is learned effectively.
+* **Implementation:** The project successfully demonstrated the **deployment** phase using the `vetiver` package to create a **Plumber REST API**. This implementation allows for real-time predictions and integration into external applications, completing the end-to-end machine learning lifecycle.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
