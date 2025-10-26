@@ -1,0 +1,18 @@
+file: stroke_prediction_rf.rds
+file_size: 2774130
+pin_hash: c1f9a54fe2de7dbb
+type: rds
+title: 'stroke_prediction_rf: a pinned list'
+description: A ranger classification modeling workflow
+tags: ~
+urls: ~
+created: 20251025T232803Z
+api_version: 1
+user:
+  required_pkgs:
+  - parsnip
+  - ranger
+  - recipes
+  - themis
+  - workflows
+  renv_lock: ~
